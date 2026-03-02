@@ -36,7 +36,7 @@ CONTENT_TYPES = {
 
 
 class SpeechRequest(BaseModel):
-    model: str = "gemini-2.5-flash-tts"
+    model: str = "gemini-2.5-flash-preview-tts"
     input: str
     voice: str = "Kore"
     response_format: str = "pcm"
@@ -53,7 +53,10 @@ async def speech(req: SpeechRequest):
     gemini_voice = VOICE_MAP.get(req.voice.lower(), req.voice)
 
     # Build the text: prepend instructions if provided
-    text = f"{req.instructions}: {req.input}" if req.instructions else req.input
+    if req.instructions:
+        text = f"Say the following text {req.instructions}: {req.input}"
+    else:
+        text = f"Say the following text: {req.input}"
 
     # Build Gemini request payload
     payload = {
@@ -68,10 +71,11 @@ async def speech(req: SpeechRequest):
         },
     }
 
-    url = f"{GEMINI_BASE_URL}/{req.model}:generateContent?key={GEMINI_API_KEY}"
+    url = f"{GEMINI_BASE_URL}/{req.model}:generateContent"
+    headers = {"x-goog-api-key": GEMINI_API_KEY}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, json=payload)
+        resp = await client.post(url, json=payload, headers=headers)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
