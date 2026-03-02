@@ -3,16 +3,22 @@
 import asyncio
 import base64
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-app = FastAPI()
+load_dotenv()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-preview-tts")
+GEMINI_DEFAULT_VOICE = os.environ.get("GEMINI_DEFAULT_VOICE", "Kore")
+PROXY_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
+PROXY_PORT = int(os.environ.get("PROXY_PORT", "8890"))
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 # OpenAI voice name → Gemini voice name
@@ -34,11 +40,24 @@ CONTENT_TYPES = {
     "aac": "audio/aac",
 }
 
+http_client: httpx.AsyncClient
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global http_client
+    http_client = httpx.AsyncClient(timeout=60.0)
+    yield
+    await http_client.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+
 
 class SpeechRequest(BaseModel):
-    model: str = "gemini-2.5-flash-preview-tts"
+    model: str = ""
     input: str
-    voice: str = "Kore"
+    voice: str = ""
     response_format: str = "pcm"
     instructions: Optional[str] = None
     speed: Optional[float] = 1.0
@@ -49,8 +68,12 @@ async def speech(req: SpeechRequest):
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
 
+    # Map non-Gemini model names to the configured Gemini TTS model
+    model = req.model if req.model.startswith("gemini") else GEMINI_MODEL
+
     # Map OpenAI voice names to Gemini equivalents; pass through unknown names as-is
-    gemini_voice = VOICE_MAP.get(req.voice.lower(), req.voice)
+    voice = req.voice or GEMINI_DEFAULT_VOICE
+    gemini_voice = VOICE_MAP.get(voice.lower(), voice)
 
     # Build the text: prepend instructions if provided
     if req.instructions:
@@ -71,25 +94,37 @@ async def speech(req: SpeechRequest):
         },
     }
 
-    url = f"{GEMINI_BASE_URL}/{req.model}:generateContent"
+    url = f"{GEMINI_BASE_URL}/{model}:generateContent"
     headers = {"x-goog-api-key": GEMINI_API_KEY}
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, json=payload, headers=headers)
+    try:
+        resp = await http_client.post(url, json=payload, headers=headers)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Gemini API timed out")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Gemini API unreachable: {exc}")
 
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
     data = resp.json()
 
-    # Extract base64 audio from response
+    # Extract base64 audio from response — scan parts for inlineData
+    audio_b64 = None
     try:
-        inline_data = data["candidates"][0]["content"]["parts"][0]["inlineData"]
-        audio_b64 = inline_data["data"]
-    except (KeyError, IndexError) as exc:
-        raise HTTPException(status_code=502, detail=f"Unexpected Gemini response: {exc}")
+        for part in data["candidates"][0]["content"]["parts"]:
+            if "inlineData" in part:
+                audio_b64 = part["inlineData"]["data"]
+                break
+    except (KeyError, IndexError):
+        pass
+    if not audio_b64:
+        raise HTTPException(status_code=502, detail="No audio in Gemini response")
 
-    pcm_bytes = base64.b64decode(audio_b64)
+    try:
+        pcm_bytes = base64.b64decode(audio_b64)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Invalid audio data from Gemini")
 
     fmt = req.response_format.lower()
 
@@ -138,4 +173,4 @@ async def _ffmpeg_convert(pcm_bytes: bytes, fmt: str) -> bytes:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8890)
+    uvicorn.run(app, host=PROXY_HOST, port=PROXY_PORT)

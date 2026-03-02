@@ -13,14 +13,20 @@ cp .env.example .env
 ## Usage
 
 ```bash
-# Load API key
-export GEMINI_API_KEY=your-key-here
-
-# Start proxy
 python server.py
 ```
 
-The proxy listens on `http://0.0.0.0:8890`.
+The proxy loads config from `.env` and listens on `http://127.0.0.1:8890` by default.
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `GEMINI_API_KEY` | (required) | Your Google Gemini API key |
+| `GEMINI_MODEL` | `gemini-2.5-flash-preview-tts` | Gemini TTS model to use |
+| `GEMINI_DEFAULT_VOICE` | `Kore` | Default voice when none specified |
+| `PROXY_HOST` | `127.0.0.1` | Host to bind to |
+| `PROXY_PORT` | `8890` | Port to listen on |
 
 ## Test
 
@@ -28,7 +34,7 @@ The proxy listens on `http://0.0.0.0:8890`.
 # Basic TTS
 curl -X POST http://localhost:8890/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"model":"gemini-2.5-flash-tts","input":"Hello world","voice":"Kore","response_format":"pcm"}' \
+  -d '{"input":"Hello world","voice":"Kore","response_format":"pcm"}' \
   --output test.pcm
 
 # Play it
@@ -37,7 +43,7 @@ ffplay -f s16le -ar 24000 -ac 1 test.pcm
 # With voice style instructions
 curl -X POST http://localhost:8890/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"model":"gemini-2.5-flash-tts","input":"Hello world","voice":"Kore","response_format":"pcm","instructions":"Speak in a warm, seductive whisper"}' \
+  -d '{"input":"Hello world","voice":"Sulafat","response_format":"pcm","instructions":"Speak in a warm, seductive whisper"}' \
   --output test.pcm
 ```
 
@@ -59,20 +65,26 @@ converse(message="Hello", tts_instructions="Speak seductively")
 
 ## Voice Mapping
 
-OpenAI voice names are automatically mapped to Gemini equivalents. You can also use any Gemini voice name directly.
+OpenAI voice names are automatically mapped to Gemini equivalents. You can also use any Gemini voice name directly (30 voices available).
 
 | OpenAI | Gemini | Character |
 |--------|--------|-----------|
-| alloy | Puck | Upbeat, energetic |
-| echo | Charon | Informative, clear |
-| fable | Achernar | Soft, gentle |
-| onyx | Orus | Firm, decisive |
-| nova | Kore | Firm, confident |
-| shimmer | Aoede | Breezy, natural |
+| alloy | Puck | Upbeat |
+| echo | Charon | Informative |
+| fable | Achernar | Soft |
+| onyx | Orus | Firm |
+| nova | Kore | Firm |
+| shimmer | Aoede | Breezy |
 
-Gemini supports ~30 voices total — pass any valid name directly.
+Non-Gemini model names (e.g. `tts-1`) are automatically mapped to the configured `GEMINI_MODEL`.
 
 ## Audio Formats
 
 - `pcm` — Raw 24kHz 16-bit mono (default, no conversion needed)
 - `mp3`, `wav`, `opus`, `flac`, `aac` — Converted via ffmpeg (must be installed)
+
+## Gemini Docs
+
+- [Speech generation (TTS) guide](https://ai.google.dev/gemini-api/docs/speech-generation) — API format, voice list, and multi-speaker setup
+- [Available models](https://ai.google.dev/gemini-api/docs/models) — model names and capabilities
+- [Get started with TTS (Colab)](https://colab.research.google.com/github/google-gemini/cookbook/blob/main/quickstarts/Get_started_TTS.ipynb) — interactive examples
